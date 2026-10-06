@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
+### Changed
+
+- Complete the local `moves!` work and use `Board.move` for its checks.
+- Add decidable equality and a `WonBy` instance so documented proofs work.
+- Translate `board!` through typed syntax patterns instead of raw tree offsets.
+- Complete placement reachability proofs with `place` and `finish_game` tactics.
+- Move demonstrations into checked examples and correct the draw sequence.
+- Check all winning lines, syntax equivalence, invalid moves, and proof failures
+  in the default build; add a sequential verification script.
+- Require nine cells when checking whether a board is full.
+- Align the printed borders and column headings with the labeled rows.
+- Pin Lean 4.34.1 and document the syntax's guarantees and game-rule boundaries.
+
 ### Added
 - Initial TicTacToe Lean library files (`TicTacToe.lean`, `TicTacToe/Basic.lean`).
 - `Main.lean` executable.
@@ -38,4 +51,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Restructured `TicTacToe.lean` to import new modules.
 
 ### Improved
-- Enhanced `ppBoard` pretty printer to include row and column indices and uniform spacing for clearer, aligned output. (2025-05-09:??:??) 
+- Enhanced `ppBoard` pretty printer to include row and column indices and uniform spacing for clearer, aligned output. (2025-05-09:??:??)

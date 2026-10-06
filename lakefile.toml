@@ -1,9 +1,15 @@
 name = "TicTacToe"
 version = "0.1.0"
-defaultTargets = ["tictactoe"]
+defaultTargets = ["tictactoe", "TicTacToeTests"]
+
+# Keep individual Lean processes responsive on development machines.
+moreLeanArgs = ["-j2"]
 
 [[lean_lib]]
 name = "TicTacToe"
+
+[[lean_lib]]
+name = "TicTacToeTests"
 
 [[lean_exe]]
 name = "tictactoe"

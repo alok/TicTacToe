@@ -1,12 +1,9 @@
-import Lean.Elab
-import Lean.Elab.Term
-import Lean.Meta
-import Lean.Parser
+import Lean
 
 namespace TicTacToe
 
 /-- Represents a player in Tic Tac Toe. -/
-inductive Player | X | O deriving Repr, BEq, Inhabited
+inductive Player | X | O deriving Repr, BEq, DecidableEq, Inhabited
 
 instance : ToString Player where
   toString
@@ -17,7 +14,7 @@ instance : ToString Player where
 inductive Square
   | empty
   | occupied (player : Player)
-  deriving Repr, BEq, Inhabited
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 instance : ToString Square where
   toString
@@ -40,7 +37,8 @@ instance : ToString Square where
     some (idx / 3, idx % 3)
   else none
 
-/-- The board is a flat `Array` of exactly nine `Square`s. -/
+/-- A flat array of squares. `initialBoard`, `mkBoard`, and the literals produce
+nine-cell boards; the abbreviation itself does not enforce the size. -/
 abbrev Board := Array Square
 
 /-- Smart-constructor ensuring the array has exactly nine elements. -/
@@ -55,7 +53,8 @@ def initialBoard : Board :=
   let idx ← toIdx row col
   b[idx]?
 
-/-- Set a square on the board. Fails if the coordinate is out of bounds or already occupied. -/
+/-- Place a mark on an empty square, or clear a square with `.empty`.
+Fails for out-of-bounds coordinates, missing cells, or overwriting a mark. -/
 @[simp] def setSquare (b : Board) (row col : Nat) (s : Square) : Option Board :=
   match toIdx row col with
   | none      => none
@@ -80,10 +79,10 @@ def ppBoard (b : Board) : String :=
   let row (r : Nat) : String :=
     s!"  {r} │{cell r 0}│{cell r 1}│{cell r 2}│"
 
-  let header := "    0   1   2\n"
-  let top    := "  ┌───┬───┬───┐\n"
-  let sep    := "  ├───┼───┼───┤\n"
-  let bottom := "  └───┴───┴───┘"
+  let header := "      0   1   2\n"
+  let top    := "    ┌───┬───┬───┐\n"
+  let sep    := "    ├───┼───┼───┤\n"
+  let bottom := "    └───┴───┴───┘"
   header ++ top ++ row 0 ++ "\n" ++ sep ++ row 1 ++ "\n" ++ sep ++ row 2 ++ "\n" ++ bottom
 
 instance : Repr Board where
@@ -92,7 +91,8 @@ instance : Repr Board where
 instance : ToString Board where
   toString := ppBoard
 
-/-- Attempt to place `p` at `(row,col)` on `b`. -/
+/-- Attempt to place `p` at `(row, col)` on `b`.
+Checks bounds and occupancy; does not enforce turn order or game status. -/
 @[simp] def Board.move (b : Board) (p : Player) (row col : Nat) : Option Board :=
   setSquare b row col (.occupied p)
 
@@ -101,7 +101,7 @@ inductive GameStatus
   | Win (p : Player)
   | Draw
   | Ongoing
-  deriving Repr, BEq
+  deriving Repr, BEq, DecidableEq
 
 def gameStatusToString : GameStatus → String
 | .Win p   => s!"Win {p}"
@@ -121,8 +121,10 @@ instance : ToString GameStatus where
   row? 0 || row? 1 || row? 2 || col? 0 || col? 1 || col? 2 || diag1 || diag2
 
 @[simp] def isBoardFull (b : Board) : Bool :=
-  b.all fun sq => sq != Square.empty
+  b.size == boardSize && b.toList.all fun sq => sq != Square.empty
 
+/-- Classify a position. If an arbitrary literal gives both players a winning
+line, X takes precedence. This function does not validate a game's history. -/
 @[simp] def getGameStatus (b : Board) : GameStatus :=
   if checkPlayerWin b Player.X then GameStatus.Win Player.X
   else if checkPlayerWin b Player.O then GameStatus.Win Player.O
@@ -154,60 +156,39 @@ syntax (name := tttRowRule) tttCell "|" tttCell "|" tttCell : tttRow
 declare_syntax_cat tttBoardSyntax
 syntax tttRow tttRow tttRow : tttBoardSyntax
 
-/-- Internal helper: elaborate a single cell. -/
-private def elabTttCell (stx : Lean.Syntax) : Lean.Elab.Term.TermElabM Square :=
+/-- Translate a cell to an ordinary Lean constructor term. -/
+private def termOfCell (stx : Lean.TSyntax `tttCell) : Lean.MacroM (Lean.TSyntax `term) :=
   match stx with
-  | `(tttCell| X) => pure (.occupied .X)
-  | `(tttCell| O) => pure (.occupied .O)
-  | `(tttCell| _) => pure .empty
-  | _             => Lean.throwError s!"unsupported cell syntax {stx}"
+  | `(tttCell| X) => `(Square.occupied Player.X)
+  | `(tttCell| O) => `(Square.occupied Player.O)
+  | `(tttCell| _) => `(Square.empty)
+  | _ => Lean.Macro.throwErrorAt stx "unsupported cell syntax"
 
-/-- The term elaborator turning `board!` syntax into a `TicTacToe.Board` value. -/
-elab "board! " b:tttBoardSyntax : term => do
-  let mut squares : Array Square := #[]
-  unless b.raw.getNumArgs = 3 do
-    Lean.throwError s!"Expected 3 rows, got {b.raw.getNumArgs}"
-  for rowIdx in [:3] do
-    let row := b.raw.getArg rowIdx
-    unless row.isOfKind `TicTacToe.tttRowRule do
-      Lean.throwError s!"malformed tttRow"
-    -- row := cell | cell | cell  (5 args with separators)
-    let cells := #[row.getArg 0, row.getArg 2, row.getArg 4]
-    for cell in cells do
-      squares := squares.push (← elabTttCell cell)
-  unless squares.size = boardSize do
-    Lean.throwError s!"internal error: expected 9 squares, got {squares.size}"
-  -- build an array literal expression `#[...]` corresponding to squares
-  let squareTerms ← squares.mapM fun sq =>
-    match sq with
-    | .empty => `(Square.empty)
-    | .occupied .X => `(Square.occupied Player.X)
-    | .occupied .O => `(Square.occupied Player.O)
-  let arrSyntax ← `(#[$squareTerms,*])
-  let boardTy ← `(TicTacToe.Board)
-  Lean.Elab.Term.elabTerm arrSyntax (some (← Lean.Elab.Term.elabType boardTy))
+private def termsOfRow (stx : Lean.TSyntax `tttRow) :
+    Lean.MacroM (Array (Lean.TSyntax `term)) := do
+  match stx with
+  | `(tttRow| $a:tttCell | $b:tttCell | $c:tttCell) =>
+    #[a, b, c].mapM termOfCell
+  | _ => Lean.Macro.throwErrorAt stx "unsupported row syntax"
 
--- Example usage of the custom syntax:
-#eval board!
-  X | O | _
-  _ | X | _
-  O | _ | X
-
-#eval getGameStatus (board!
-  X | X | X
-  O | O | _
-  _ | _ | _)
-
-#eval initialBoard
+/-- A nine-cell position literal. The grammar checks the shape, not whether
+the position can occur in a game with alternating turns. -/
+macro "board! " b:tttBoardSyntax : term => do
+  match b with
+  | `(tttBoardSyntax| $a:tttRow $b:tttRow $c:tttRow) =>
+    let cells := (← termsOfRow a) ++ (← termsOfRow b) ++ (← termsOfRow c)
+    `((#[$cells,*] : TicTacToe.Board))
+  | _ => Lean.Macro.throwErrorAt b "unsupported board syntax"
 
 /-!
 ### Logical predicate expressing that a board is a win for a given player.
 -/
 
+/-- The status classifier reports a win for `p` on this position. -/
 def WonBy (p : Player) (b : Board) : Prop :=
   getGameStatus b = (.Win p)
 
---lemma decidableWonBy (p : Player) (b : Board) : Decidable (WonBy p b) :=
---  inferInstance
+instance (p : Player) (b : Board) : Decidable (WonBy p b) :=
+  inferInstanceAs (Decidable (getGameStatus b = .Win p))
 
 end TicTacToe
